@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: wifi-zone-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_VERSION
+        value: 18.16.0
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PORT
+        value: 3000
+      - key: MIKROTIK_HOST
+        sync: false
+      - key: MIKROTIK_USER
+        sync: false
+      - key: MIKROTIK_PASS
+        sync: false
