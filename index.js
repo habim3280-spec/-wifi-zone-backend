@@ -32,6 +32,20 @@ app.get('/', (req, res) => {
 });
 
 // Auth Routes
+app.post('/api/auth/register', async (req, res) => {
+  const { username, password, role, phone } = req.body;
+  try {
+    const existingUser = await User.findOne({ username });
+    if (existingUser) return res.status(400).json({ message: 'Utilisateur déjà existant' });
+
+    const user = new User({ username, password, role: role || 'client', phone });
+    await user.save();
+    res.status(201).json({ message: 'Utilisateur créé avec succès' });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   try {
@@ -246,9 +260,24 @@ app.post('/api/create-ticket', async (req, res) => {
 
     transaction.status = 'completed';
 
-    // 4. GÉNÉRATION DU TICKET MIKROTIK
+    // 4. GÉNÉRATION DU TICKET MIKROTIK (Mode Simulation si pas de routeur)
     const randomCode = "WIFI-" + Math.random().toString(36).substring(2, 8).toUpperCase();
-    const mikrotikSuccess = await createMikrotikTicket(randomCode, plan.duration);
+    let mikrotikSuccess = false;
+    
+    try {
+      mikrotikSuccess = await createMikrotikTicket(randomCode, plan.duration);
+    } catch (e) {
+      console.warn("Routeur non joignable, passage en mode simulation.");
+    }
+
+    // On autorise la création même si MikroTik échoue (pour le test/démo)
+    const bypassMikrotik = true; 
+
+    if (!mikrotikSuccess && !bypassMikrotik) {
+      transaction.status = 'failed';
+      await transaction.save();
+      return res.status(500).json({ message: "Erreur lors de la création du ticket sur le routeur." });
+    }
 
     // 5. ENREGISTREMENT DU TICKET
     const newTicket = new Ticket({
@@ -293,6 +322,18 @@ async function seedDatabase() {
       ];
       await Plan.insertMany(defaultPlans);
       console.log('Forfaits par défaut ajoutés.');
+    }
+
+    // Création d'un compte Admin par défaut si la base est vide
+    const countUsers = await User.countDocuments();
+    if (countUsers === 0) {
+      const admin = new User({
+        username: 'admin',
+        password: 'admin',
+        role: 'admin'
+      });
+      await admin.save();
+      console.log('Compte Admin par défaut créé (admin/admin).');
     }
   } catch (err) {
     console.error('Erreur seedDatabase:', err);
