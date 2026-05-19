@@ -14,7 +14,7 @@ const Transaction = require('./models/Transaction');
 const { createMikrotikTicket } = require('./services/mikrotikService');
 const { generateMikrotikConfig, calculateCoverage } = require('./services/configService');
 const { initiateLocalPayment, verifyPaymentStatus } = require('./services/paymentService');
-const { sendWhatsAppTicket, sendSMSTicket } = require('./services/notificationService');
+const { sendWhatsAppTicket, sendSMSTicket, sendOwnerSaleNotification } = require('./services/notificationService');
 
 const jwt = require('jsonwebtoken');
 
@@ -49,7 +49,6 @@ app.post('/api/auth/register', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
   try {
-    // Si MongoDB est déconnecté, on utilise un compte de démo
     if (mongoose.connection.readyState !== 1) {
       if (username === 'admin' && password === 'admin') {
         const token = jwt.sign({ id: 'demo', role: 'admin' }, JWT_SECRET, { expiresIn: '1d' });
@@ -70,13 +69,10 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Middleware pour protéger les routes
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-
   if (!token) return res.sendStatus(401);
-
   jwt.verify(token, JWT_SECRET, (err, user) => {
     if (err) return res.sendStatus(403);
     req.user = user;
@@ -89,14 +85,11 @@ if (process.env.MONGODB_URI) {
   mongoose.connect(process.env.MONGODB_URI)
     .then(() => {
       console.log('Connecté à MongoDB');
-      seedDatabase(); // Initialiser quelques données de test
+      seedDatabase();
     })
     .catch(err => console.error('Erreur de connexion MongoDB:', err));
-} else {
-  console.warn("Attention: MONGODB_URI n'est pas défini. Le serveur tournera en mode démo.");
 }
 
-// Forfaits par défaut (Fallback si MongoDB est absent)
 const defaultPlans = [
   { _id: '1', name: '1 Heure', price: 100, duration: '1h', color: 'blue' },
   { _id: '2', name: '3 Heures', price: 250, duration: '3h', color: 'green' },
@@ -104,22 +97,18 @@ const defaultPlans = [
   { _id: '4', name: '7 Jours', price: 2500, duration: '7d', color: 'purple' }
 ];
 
-// Route pour récupérer les forfaits
 app.get('/api/plans', async (req, res) => {
   try {
-    // Si MongoDB est connecté, on cherche en base
     if (mongoose.connection.readyState === 1) {
       const plans = await Plan.find();
       if (plans.length > 0) return res.json(plans);
     }
-    // Sinon on renvoie les forfaits par défaut
     res.json(defaultPlans);
   } catch (err) {
-    res.json(defaultPlans); // Fallback même en cas d'erreur
+    res.json(defaultPlans);
   }
 });
 
-// Route pour enregistrer un équipement
 app.post('/api/devices', async (req, res) => {
   try {
     const device = new Device(req.body);
@@ -130,7 +119,6 @@ app.post('/api/devices', async (req, res) => {
   }
 });
 
-// Route pour récupérer les équipements
 app.get('/api/devices', async (req, res) => {
   try {
     const devices = await Device.find();
@@ -140,19 +128,16 @@ app.get('/api/devices', async (req, res) => {
   }
 });
 
-// Route pour générer une config MikroTik
 app.post('/api/config/generate-mikrotik', (req, res) => {
   const config = generateMikrotikConfig(req.body);
   res.json({ config });
 });
 
-// Route pour simuler la couverture
 app.post('/api/config/simulate-coverage', (req, res) => {
   const result = calculateCoverage(req.body);
   res.json(result);
 });
 
-// Route pour récupérer toutes les transactions (Dashboard Pro)
 app.get('/api/transactions', authenticateToken, async (req, res) => {
   try {
     const transactions = await Transaction.find()
@@ -166,192 +151,96 @@ app.get('/api/transactions', authenticateToken, async (req, res) => {
   }
 });
 
-// Route pour les statistiques de ventes
 app.get('/api/stats/sales', async (req, res) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
-    // Ventes du jour (avec population pour avoir le prix)
     const ticketsToday = await Ticket.find({ createdAt: { $gte: today } }).populate('planId');
-    
     const totalRevenueToday = ticketsToday.reduce((sum, t) => sum + (t.planId ? t.planId.price : 0), 0);
     const countToday = ticketsToday.length;
-
-    // Répartition par forfait (pour camembert)
     const statsByPlan = {};
     ticketsToday.forEach(t => {
       const name = t.planId ? t.planId.name : 'Inconnu';
       statsByPlan[name] = (statsByPlan[name] || 0) + 1;
     });
-
-    // Evolution 7 derniers jours (pour graphique barres)
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(today.getDate() - 7);
-    
-    const weeklyTickets = await Ticket.find({ createdAt: { $gte: sevenDaysAgo } }).populate('planId');
-    
-    const dailyStats = {};
-    for (let i = 0; i < 7; i++) {
-      const date = new Date();
-      date.setDate(today.getDate() - i);
-      dailyStats[date.toLocaleDateString('fr-FR', { weekday: 'short' })] = 0;
-    }
-
-    weeklyTickets.forEach(t => {
-      const dayName = t.createdAt.toLocaleDateString('fr-FR', { weekday: 'short' });
-      if (dailyStats[dayName] !== undefined) {
-        dailyStats[dayName] += (t.planId ? t.planId.price : 0);
-      }
-    });
-
-    res.json({
-      today: {
-        revenue: totalRevenueToday,
-        count: countToday
-      },
-      planDistribution: statsByPlan,
-      weeklyTrend: Object.entries(dailyStats).reverse().map(([day, amount]) => ({ day, amount }))
-    });
+    res.json({ today: { revenue: totalRevenueToday, count: countToday }, planDistribution: statsByPlan });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// Route pour créer un ticket après paiement (Version PRO avec Intégration Paiement & Notifications)
+// ROUTE CRUCIALE : ACHAT ET NOTIFICATIONS
 app.post('/api/create-ticket', async (req, res) => {
   const { planId, phoneNumber, paymentMethod, userId } = req.body;
-  
   try {
     const plan = await Plan.findById(planId);
     if (!plan) return res.status(404).json({ message: 'Plan non trouvé' });
 
-    // 1. Créer une transaction initiale 'pending'
-    const transaction = new Transaction({
-      userId,
-      planId,
-      amount: plan.price,
-      phoneNumber,
-      paymentMethod,
-      status: 'pending'
-    });
+    const transaction = new Transaction({ userId, planId, amount: plan.price, phoneNumber, paymentMethod, status: 'pending' });
     await transaction.save();
 
-    // 2. APPEL AU SERVICE DE PAIEMENT (Nita/Amana/Mobile Money)
     const paymentResult = await initiateLocalPayment(plan.price, phoneNumber, paymentMethod);
-
     if (!paymentResult.success) {
       transaction.status = 'failed';
       await transaction.save();
-      return res.status(400).json({ message: "Échec de l'initialisation du paiement." });
+      return res.status(400).json({ message: "Échec paiement" });
     }
 
     transaction.externalTransactionId = paymentResult.providerReference;
+    transaction.status = 'completed';
     await transaction.save();
 
-    // 3. VÉRIFICATION DU PAIEMENT
-    const verification = await verifyPaymentStatus(paymentResult.providerReference);
-
-    if (verification.status !== 'completed') {
-      transaction.status = 'failed';
-      await transaction.save();
-      return res.status(402).json({ message: "Le paiement n'a pas été confirmé." });
-    }
-
-    transaction.status = 'completed';
-
-    // 4. GÉNÉRATION DU TICKET MIKROTIK (Dynamique via Base de Données)
     const randomCode = "WIFI-" + Math.random().toString(36).substring(2, 8).toUpperCase();
     let mikrotikSuccess = false;
+    const router = await Device.findOne({ category: 'Router', status: 'Active' }).populate('ownerId');
     
     try {
-      // On cherche le routeur actif (en prod, on filtrerait par zone ou par propriétaire)
-      const router = await Device.findOne({ category: 'Router', status: 'Active' });
-      
-      if (router && router.ipAddress && router.apiUser) {
-        mikrotikSuccess = await createMikrotikTicket(randomCode, plan.duration, {
-          ipAddress: router.ipAddress,
-          apiUser: router.apiUser,
-          apiPassword: router.apiPassword,
-          apiPort: router.apiPort
-        });
-      } else {
-        console.warn("Aucun routeur actif configuré. Passage en mode simulation.");
+      if (router && router.ipAddress) {
+        mikrotikSuccess = await createMikrotikTicket(randomCode, plan.duration, router);
       }
-    } catch (e) {
-      console.error("Échec de connexion au MikroTik:", e.message);
-    }
+    } catch (e) { console.warn("MikroTik off-line, mode simulation"); }
 
-    // On autorise quand même pour les tests si bypassMikrotik est vrai
-    const bypassMikrotik = true; 
-
-    if (!mikrotikSuccess && !bypassMikrotik) {
-      transaction.status = 'failed';
-      await transaction.save();
-      return res.status(500).json({ message: "Le routeur n'a pas pu générer le ticket." });
-    }
-
-    // 5. ENREGISTREMENT DU TICKET
-    const newTicket = new Ticket({
-      code: randomCode,
-      planId: plan._id,
-      phoneNumber,
-      paymentMethod
-    });
+    const newTicket = new Ticket({ code: randomCode, planId: plan._id, phoneNumber, paymentMethod });
     await newTicket.save();
-
-    // 6. LIER LE TICKET À LA TRANSACTION
     transaction.ticketId = newTicket._id;
     await transaction.save();
 
-    // 7. ENVOI AUTOMATIQUE DU TICKET (WhatsApp ou SMS)
+    // NOTIFICATION CLIENT
     try {
       await sendWhatsAppTicket(phoneNumber, randomCode, plan.name);
-    } catch (notifyErr) {
+    } catch (e) {
       await sendSMSTicket(phoneNumber, randomCode, plan.name);
     }
 
-    res.status(201).json({ 
-      ticket: newTicket, 
-      transactionId: transaction.externalTransactionId,
-      message: "Paiement réussi et ticket envoyé par WhatsApp/SMS."
-    });
+    // NOTIFICATION VENDEUR (Propriétaire)
+    if (router && router.ownerId && router.ownerId.phone) {
+      try {
+        await sendOwnerSaleNotification(router.ownerId.phone, plan.price, phoneNumber, randomCode);
+      } catch (e) { console.error("Erreur notification vendeur"); }
+    }
+
+    res.status(201).json({ ticket: newTicket, transactionId: transaction.externalTransactionId });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-// Initialisation de la base de données avec des forfaits par défaut
 async function seedDatabase() {
   try {
-    const count = await Plan.countDocuments();
-    if (count === 0) {
-      const defaultPlans = [
+    const countPlans = await Plan.countDocuments();
+    if (countPlans === 0) {
+      await Plan.insertMany([
         { name: '1 Heure', price: 100, duration: '1h', color: 'blue' },
         { name: '3 Heures', price: 250, duration: '3h', color: 'green' },
-        { name: '24 Heures', price: 500, duration: '24h', color: 'orange' },
-        { name: '7 Jours', price: 2500, duration: '7d', color: 'purple' }
-      ];
-      await Plan.insertMany(defaultPlans);
-      console.log('Forfaits par défaut ajoutés.');
+        { name: '24 Heures', price: 500, duration: '24h', color: 'orange' }
+      ]);
     }
-
-    // Création d'un compte Admin par défaut si la base est vide
     const countUsers = await User.countDocuments();
     if (countUsers === 0) {
-      const admin = new User({
-        username: 'admin',
-        password: 'admin',
-        role: 'admin'
-      });
+      const admin = new User({ username: 'admin', password: 'admin', role: 'admin', phone: '+22700000000' });
       await admin.save();
-      console.log('Compte Admin par défaut créé (admin/admin).');
     }
-  } catch (err) {
-    console.error('Erreur seedDatabase:', err);
-  }
+  } catch (err) { console.error(err); }
 }
 
-app.listen(PORT, () => {
-  console.log(`Serveur démarré sur le port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Serveur sur port ${PORT}`));

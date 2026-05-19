@@ -40,7 +40,23 @@ const sendSMSTicket = async (phoneNumber, ticketCode, planName) => {
     };
 };
 
+/**
+ * Notifie le vendeur (propriétaire) d'une vente réussie.
+ */
+const sendOwnerSaleNotification = async (ownerPhone, amount, clientPhone, ticketCode) => {
+    console.log(`[Notification Vendeur] Envoi confirmation à ${ownerPhone}...`);
+    
+    // Simulation délai
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    return {
+        success: true,
+        message: `ZonePass : Vente confirmée ! Montant: ${amount} FCFA. Client: ${clientPhone}. Ticket: ${ticketCode}.`
+    };
+};
+
 module.exports = {
     sendWhatsAppTicket,
-    sendSMSTicket
+    sendSMSTicket,
+    sendOwnerSaleNotification
 };
