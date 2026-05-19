@@ -23,12 +23,13 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'votre_secret_tres_prive';
 
 // Middleware
-app.use(cors({
-  origin: '*', 
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use(cors());
 app.use(express.json());
+
+// Route de test racine
+app.get('/', (req, res) => {
+  res.send('Serveur ZonePass opérationnel !');
+});
 
 // Auth Routes
 app.post('/api/auth/login', async (req, res) => {
