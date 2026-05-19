@@ -5,9 +5,14 @@ const deviceSchema = new mongoose.Schema({
   brand: { type: String, required: true },
   model: { type: String, required: true },
   category: { type: String, enum: ['Router', 'Antenna', 'Starlink'], required: true },
+  // Champs techniques pour la connexion MikroTik
+  ipAddress: { type: String }, 
+  apiUser: { type: String },
+  apiPassword: { type: String },
+  apiPort: { type: Number, default: 8728 },
   macAddress: { type: String },
   status: { type: String, enum: ['Registered', 'Configured', 'Active'], default: 'Registered' },
-  ownerId: { type: String }, // Simplifié pour l'instant
+  ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdAt: { type: Date, default: Date.now }
 });
 

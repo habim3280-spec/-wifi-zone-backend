@@ -260,23 +260,35 @@ app.post('/api/create-ticket', async (req, res) => {
 
     transaction.status = 'completed';
 
-    // 4. GÉNÉRATION DU TICKET MIKROTIK (Mode Simulation si pas de routeur)
+    // 4. GÉNÉRATION DU TICKET MIKROTIK (Dynamique via Base de Données)
     const randomCode = "WIFI-" + Math.random().toString(36).substring(2, 8).toUpperCase();
     let mikrotikSuccess = false;
     
     try {
-      mikrotikSuccess = await createMikrotikTicket(randomCode, plan.duration);
+      // On cherche le routeur actif (en prod, on filtrerait par zone ou par propriétaire)
+      const router = await Device.findOne({ category: 'Router', status: 'Active' });
+      
+      if (router && router.ipAddress && router.apiUser) {
+        mikrotikSuccess = await createMikrotikTicket(randomCode, plan.duration, {
+          ipAddress: router.ipAddress,
+          apiUser: router.apiUser,
+          apiPassword: router.apiPassword,
+          apiPort: router.apiPort
+        });
+      } else {
+        console.warn("Aucun routeur actif configuré. Passage en mode simulation.");
+      }
     } catch (e) {
-      console.warn("Routeur non joignable, passage en mode simulation.");
+      console.error("Échec de connexion au MikroTik:", e.message);
     }
 
-    // On autorise la création même si MikroTik échoue (pour le test/démo)
+    // On autorise quand même pour les tests si bypassMikrotik est vrai
     const bypassMikrotik = true; 
 
     if (!mikrotikSuccess && !bypassMikrotik) {
       transaction.status = 'failed';
       await transaction.save();
-      return res.status(500).json({ message: "Erreur lors de la création du ticket sur le routeur." });
+      return res.status(500).json({ message: "Le routeur n'a pas pu générer le ticket." });
     }
 
     // 5. ENREGISTREMENT DU TICKET

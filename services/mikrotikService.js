@@ -1,33 +1,23 @@
 const RosApi = require('node-routeros').RouterOSAPI;
 require('dotenv').config();
 
-const createMikrotikTicket = async (code, duration) => {
+const createMikrotikTicket = async (code, duration, routerConfig) => {
   const conn = new RosApi({
-    host: process.env.MIKROTIK_HOST,
-    user: process.env.MIKROTIK_USER,
-    password: process.env.MIKROTIK_PASS,
+    host: routerConfig.ipAddress,
+    user: routerConfig.apiUser,
+    password: routerConfig.apiPassword,
+    port: routerConfig.apiPort || 8728
   });
 
   try {
     await conn.connect();
-    console.log('Connecté au MikroTik');
-
-    // Commande pour ajouter un utilisateur hotspot
-    // On assume que le profil correspond à la durée (ex: "1h", "24h")
-    // ou qu'on utilise un profil par défaut "default"
-    await conn.write('/ip/hotspot/user/add', [
-      '=name=' + code,
-      '=password=' + code, // Le mot de passe est le même que le login pour simplifier
-      '=limit-uptime=' + duration,
-      '=comment=Achat via App WiFi Zone Niger'
-    ]);
-
-    console.log(`Ticket ${code} créé sur MikroTik pour ${duration}`);
+// ...
+    console.log(`Ticket ${code} créé sur MikroTik (${routerConfig.ipAddress}) pour ${duration}`);
     await conn.close();
     return true;
   } catch (err) {
-    console.error('Erreur MikroTik:', err);
-    return false;
+    console.error(`Erreur MikroTik (${routerConfig.ipAddress}):`, err);
+    throw err; // On propage l'erreur pour la gérer dans le flux principal
   }
 };
 
