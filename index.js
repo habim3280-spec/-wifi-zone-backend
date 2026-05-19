@@ -3,14 +3,19 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 
+// Modèles
 const Plan = require('./models/Plan');
 const Ticket = require('./models/Ticket');
-const { createMikrotikTicket } = require('./services/mikrotikService');
-
 const Device = require('./models/Device');
 const User = require('./models/User');
 const Transaction = require('./models/Transaction');
-const { generateMikrotikConfig } = require('./services/configService');
+
+// Services
+const { createMikrotikTicket } = require('./services/mikrotikService');
+const { generateMikrotikConfig, calculateCoverage } = require('./services/configService');
+const { initiateLocalPayment, verifyPaymentStatus } = require('./services/paymentService');
+const { sendWhatsAppTicket, sendSMSTicket } = require('./services/notificationService');
+
 const jwt = require('jsonwebtoken');
 
 const app = express();
@@ -65,12 +70,16 @@ const authenticateToken = (req, res, next) => {
 };
 
 // MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => {
-    console.log('Connecté à MongoDB');
-    seedDatabase(); // Initialiser quelques données de test
-  })
-  .catch(err => console.error('Erreur de connexion MongoDB:', err));
+if (process.env.MONGODB_URI) {
+  mongoose.connect(process.env.MONGODB_URI)
+    .then(() => {
+      console.log('Connecté à MongoDB');
+      seedDatabase(); // Initialiser quelques données de test
+    })
+    .catch(err => console.error('Erreur de connexion MongoDB:', err));
+} else {
+  console.warn("Attention: MONGODB_URI n'est pas défini. Le serveur tournera en mode démo.");
+}
 
 // Forfaits par défaut (Fallback si MongoDB est absent)
 const defaultPlans = [
@@ -124,7 +133,6 @@ app.post('/api/config/generate-mikrotik', (req, res) => {
 
 // Route pour simuler la couverture
 app.post('/api/config/simulate-coverage', (req, res) => {
-  const { calculateCoverage } = require('./services/configService');
   const result = calculateCoverage(req.body);
   res.json(result);
 });
@@ -195,11 +203,6 @@ app.get('/api/stats/sales', async (req, res) => {
   }
 });
 
-const { initiateLocalPayment, verifyPaymentStatus } = require('./services/paymentService');
-const { sendWhatsAppTicket, sendSMSTicket } = require('./services/notificationService');
-
-// ... (rest of imports)
-
 // Route pour créer un ticket après paiement (Version PRO avec Intégration Paiement & Notifications)
 app.post('/api/create-ticket', async (req, res) => {
   const { planId, phoneNumber, paymentMethod, userId } = req.body;
@@ -260,12 +263,9 @@ app.post('/api/create-ticket', async (req, res) => {
     await transaction.save();
 
     // 7. ENVOI AUTOMATIQUE DU TICKET (WhatsApp ou SMS)
-    // On essaie WhatsApp en priorité, puis SMS si besoin
     try {
       await sendWhatsAppTicket(phoneNumber, randomCode, plan.name);
-      console.log(`Notification WhatsApp envoyée au ${phoneNumber}`);
     } catch (notifyErr) {
-      console.warn("Échec WhatsApp, tentative SMS...");
       await sendSMSTicket(phoneNumber, randomCode, plan.name);
     }
 
@@ -275,23 +275,26 @@ app.post('/api/create-ticket', async (req, res) => {
       message: "Paiement réussi et ticket envoyé par WhatsApp/SMS."
     });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: err.message });
   }
 });
 
 // Initialisation de la base de données avec des forfaits par défaut
 async function seedDatabase() {
-  const count = await Plan.countDocuments();
-  if (count === 0) {
-    const defaultPlans = [
-      { name: '1 Heure', price: 100, duration: '1h', color: 'blue' },
-      { name: '3 Heures', price: 250, duration: '3h', color: 'green' },
-      { name: '24 Heures', price: 500, duration: '24h', color: 'orange' },
-      { name: '7 Jours', price: 2500, duration: '7d', color: 'purple' }
-    ];
-    await Plan.insertMany(defaultPlans);
-    console.log('Forfaits par défaut ajoutés à la base de données.');
+  try {
+    const count = await Plan.countDocuments();
+    if (count === 0) {
+      const defaultPlans = [
+        { name: '1 Heure', price: 100, duration: '1h', color: 'blue' },
+        { name: '3 Heures', price: 250, duration: '3h', color: 'green' },
+        { name: '24 Heures', price: 500, duration: '24h', color: 'orange' },
+        { name: '7 Jours', price: 2500, duration: '7d', color: 'purple' }
+      ];
+      await Plan.insertMany(defaultPlans);
+      console.log('Forfaits par défaut ajoutés.');
+    }
+  } catch (err) {
+    console.error('Erreur seedDatabase:', err);
   }
 }
 
